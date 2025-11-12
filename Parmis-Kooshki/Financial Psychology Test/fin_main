@@ -1,0 +1,30 @@
+from fin_processor import FinProcessor
+from fin_database import FinancialDB
+
+def main():
+    print("تست تصمیم‌گیری مالی و ریسک‌پذیری")
+    name = input("نام: ").strip()
+    gender = input("جنسیت (زن/مرد): ").strip()
+    age_group = input("بازه سنی (مثال: 25-34): ").strip()
+
+    fin = FinProcessor()
+    record = fin.run_test(name=name, gender=gender, age_group=age_group)
+
+    # خلاصهٔ نتیجه برای کاربر (فارسی)
+    print("\n--- خلاصهٔ نتایج شما ---")
+    print(f"شناسه کاربر: {record['user_id']}")
+    print(f"ریسک‌اسکور: {record['risk_score']} (0..100)")
+    print(f"شخصیت مالی: {record['financial_personality']}")
+    print("توصیه سرمایه‌گذاری (خلاصه):")
+    print(record["recommendation"].get("investment"))
+    print("\nنکتهٔ رفتاری:")
+    print(record["recommendation"].get("advice"))
+    print("\nبرای تهیهٔ داشبورد Power BI، خروجی CSV تولید شد.")
+
+    # استخراج CSV برای Power BI
+    db = fin.db
+    csv_path = db.export_csv_for_powerbi("financial_for_powerbi.csv")
+    print(f"فایل آماده برای Power BI: {csv_path}")
+
+if __name__ == "__main__":
+    main()

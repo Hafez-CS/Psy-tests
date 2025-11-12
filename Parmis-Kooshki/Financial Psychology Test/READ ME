@@ -1,0 +1,62 @@
+این پروژه با هدف تحلیل سبک تصمیم‌گیری مالی، میزان ریسک‌پذیری و شخصیت مالی کاربران طراحی شده است.
+کاربر در پاسخ به مجموعه‌ای از سوالات در بازه زمانی محدود (۵ تا ۸ ثانیه)، تحت فشار تصمیم‌گیری قرار می‌گیرد.
+سپس پاسخ‌ها به‌صورت عددی و متنی پردازش شده و در پایگاه داده (SQLite / CSV) ذخیره می‌شوند.
+
+مدل هوش مصنوعی مورد استفاده در این پروژه، مدل Fin-R1 (SUFE-AIFLM-Lab/Fin-R1) از Hugging Face است که برای تحلیل احساسات و رفتارهای مالی کاربر به کار می‌رود
+
+⸻
+
+📊 تحلیل داده و داشبورد Power BI
+
+برای تحلیل داده‌ها و مصورسازی نتایج، یک فایل نمونه CSV به نام
+financial_for_powerbi.csv
+در پوشه‌ی data/ قرار داده شده است تا به‌عنوان نمونه داده جهت ساخت داشبورد تحلیلی Power BI استفاده شود.
+
+� فناوری‌های استفاده‌شده
+ • Python (پردازش داده و منطق تست)
+ • TensorFlow / Keras (مدل‌های تحلیلی)
+ • Scikit-learn (پیش‌پردازش داده‌ها)
+ • Hugging Face (مدل Fin-R1 برای تحلیل احساسی و تصمیم‌گیری)
+ • SQLite + CSV (ذخیره داده‌ها)
+ • Power BI (تحلیل و مصورسازی داده‌ها)
+
+
+برای مشاهده داشبورد Power BI فایل زیر را باز کنید:
+
+dashboard/fin_dashboard.pbix
+
+
+🇬🇧 English Description
+
+This project is designed to analyze users’ financial decision-making style, risk tolerance, and emotional-financial behavior.
+Users answer timed questions (5–8 seconds each), and their responses are processed and stored in a SQLite / CSV dataset.
+
+The AI model used in this project is Fin-R1 (SUFE-AIFLM-Lab/Fin-R1) from Hugging Face, specialized in analyzing emotional and financial behavior patterns.
+
+⸻
+
+📊 Power BI Dashboard
+
+A sample dataset named
+financial_for_powerbi.csv
+has been included in the data/ folder.
+This file is used for Power BI visualization and analytical dashboard creation.
+
+
+🧠 Technologies Used
+ • Python (Data processing & logic)
+ • TensorFlow / Keras (Analytical modeling)
+ • Scikit-learn (Data preprocessing)
+ • Hugging Face Fin-R1 model (Emotional-financial analysis)
+ • SQLite + CSV (Data storage)
+ • Power BI (Visualization & BI dashboard)
+
+
+ Open the Power BI file to explore the dashboard:
+
+dashboard/financial_dashboard.pbix
+
+
+📁 Dataset: financial_results_sample.csv
+📊 BI Tool: Microsoft Power BI
+🤖 Model: Fin-R1 (SUFE-AIFLM-Lab/Fin-R1)

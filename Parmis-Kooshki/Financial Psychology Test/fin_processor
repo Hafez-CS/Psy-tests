@@ -1,0 +1,325 @@
+"""
+FinProcessor
+مسئولیت:
+- نمایش سؤالات (۲۰ سؤال) و دریافت پاسخ‌های عددی و از کاربر
+- اعمال محدودیت زمانی برای هر سؤال (۵ تا ۸ ثانیه؛ قابل تنظیم)
+- جمع‌آوری زمان واکنش برای هر سؤال
+- تحلیل متنی پاسخ‌ها با مدل Fin-R1 از Hugging Face
+- محاسبه‌ی risk_score بر اساس پاسخ‌های عددی (قابل تنظیم / گسترش)
+- ذخیره‌ی هر رکورد در SQLite و بکاپ در CSV
+بازگردانده‌شده: دیکشنری نهایی رکورد با فیلدهای مورد نظر
+"""
+
+import time
+import threading
+import uuid
+import json
+import sqlite3
+import csv
+from datetime import datetime
+from typing import List, Dict, Any
+
+# transformers برای مدل Fin-R1
+from transformers import pipeline
+
+class FinProcessor:
+    def __init__(
+        self,
+        db_path: str = "financial_results.db",
+        csv_path: str = "financial_results_backup.csv",
+        min_time: int = 5,
+        max_time: int = 8,
+        model_name: str = "SUFE-AIFLM-Lab/Fin-R1"
+    ):
+        """
+        ورودی:
+        - db_path: مسیر فایل SQLite
+        - csv_path: فایل CSV بکاپ
+        - min_time, max_time: زمان حداقل و حداکثر پاسخ (در ثانیه). هر سوال زمان تصادفی بین این دو می‌گیرد.
+        - model_name: نام مدل Hugging Face (Fin-R1 پیش‌فرض)
+        """
+        self.db_path = db_path
+        self.csv_path = csv_path
+        self.min_time = min_time
+        self.max_time = max_time
+
+        # بارگذاری مدل Fin-R1 (برای تحلیل متنی پاسخ‌ها)
+        # توجه: بارگذاری مدل ممکن است زمان‌بر باشد و نیاز به اینترنت داشته باشد
+        self.nlp = pipeline("text-classification", model=model_name)
+
+        # ساخت/اتصال به دیتابیس
+        self._init_db()
+
+        # تعریف ۲۰ سؤال (نمونه — تو می‌تونی سؤالات را تغییر یا گسترش دهی)
+        # هر سوال در این پیاده‌سازی عددی (۱..5) است؛ برای هر سوال می‌توانیم گزینه متنی هم از کاربر بگیریم
+        self.questions = [
+            "۱. اگر سرمایه‌ای داشته باشید که نوسان بالایی دارد، آیا آن را نگه می‌دارید یا سریع می‌فروشید؟ (۱ کاملاً می‌فروشم ... ۵ کاملاً نگه می‌دارم)",
+            "۲. هنگام سرمایه‌گذاری، آیا به دنبال سود بالا با ریسک بالا هستید یا سود کم و ثابت؟ (۱=کاملاً ثابت ... ۵=کاملاً پرریسک)",
+            "۳. اگر ارزش پرتفوی شما ۲۰٪ افت کند، چه واکنشی نشان می‌دهید؟ (۱ فوراً می‌فروشم ... ۵ خرید اضافه می‌کنم)",
+            "۴. در تصمیمات مالی چقدر روی مشورت دیگران حساب می‌کنید؟ (۱ اصلاً ... ۵ کاملاً)",
+            "۵. وقتی اطلاعات ناقص است، چقدر سریع تصمیم می‌گیرید؟ (۱ خیلی سریع ... ۵ نیاز به اطلاعات کامل)",
+            "۶. چقدر تمایل دارید بخشی از سرمایه را در گزینه‌های نوآورانه (مثلاً استارتاپ) بگذارید؟ (۱ کم ... ۵ زیاد)",
+            "۷. در مواجهه با شایعات منفی درباره بازار، معمولاً چه می‌کنید؟ (۱ سریع واکنش ... ۵ منتظر می‌مانم)",
+            "۸. آیا برای اهداف بلندمدت سرمایه‌گذاری برنامه دارید؟ (۱ خیر ... ۵ بله کاملاً برنامه‌ریزی شده)",
+            "۹. چقدر به تنوع‌بخشی در سرمایه‌گذاری اهمیت می‌دهید؟ (۱ کم ... ۵ بسیار زیاد)",
+            "۱۰. اگر پیشنهاد سرمایه‌گذاری پر سود ولی پیچیده‌ای شد، چگونه رفتار می‌کنید؟ (۱ قبول فوری ... ۵ به دقت بررسی و رد/قبول)",
+            "۱۱. در مواجهه با ریسک، احساس شما بیشتر چیست؟ (۱ ترس ... 5 هیجان)",
+            "۱۲. در مورد مدیریت بدهی چه رویکردی دارید؟ (۱ ریسک بالا در بدهی ... ۵ محافظه‌کار)",
+            "۱۳. آیا سابقه سرمایه‌گذاری دارید؟ (۱ هیچ تجربه ... ۵ تجربه زیاد)",
+            "۱۴. وقتی بازدهی کوتاه‌مدت منفی است، آیا اهداف بلندمدت را زیر سوال می‌برید؟ (۱ بله ... ۵ خیر)",
+            "۱۵. چقدر حاضر به پذیرش احتمال از دست دادن اصل سرمایه هستید؟ (۱ هرگز ... ۵ کاملاً آماده)",
+            "۱۶. ترجیح می‌دهید پول را در دارایی ملموس (مثلاً ملک) یا دارایی‌های مالی نگه دارید؟ (۱ کاملاً ملموس ... ۵ کاملاً مالی)",
+            "۱۷. آیا در تصمیمات مالی از معیارهای احساسی استفاده می‌کنید؟ (۱ همیشه ... ۵ هرگز)",
+            "۱۸. چقدر در تصمیم‌گیری مالی به اخبار و تحلیل‌ها وابسته‌اید؟ (۱ خیلی وابسته ... ۵ کم وابسته)",
+            "۱۹. آیا در مواجهه با فرصت سرمایه‌گذاری سریع، تمایل به اقدام دارید؟ (۱ نه ... ۵ بله)",
+            "۲۰. چقدر به توصیه‌های مالی آنلاین (مثلاً فروم‌ها، شبکه‌های اجتماعی) اعتماد دارید؟ (۱ زیاد ... ۵ خیلی کم)"
+        ]
+
+        # ساختار ستون‌های دیتابیس/CSV را در توضیحات ثبت می‌کنیم
+        # (درون DB جدول ایجاد می‌شود؛ CSV به عنوان بکاپ افزایشی نوشته می‌شود)
+        self._ensure_csv_header()
+
+    # ---------- دیتابیس ----------
+    def _init_db(self):
+        conn = sqlite3.connect(self.db_path)
+        c = conn.cursor()
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS results (
+                id TEXT PRIMARY KEY,
+                user_id TEXT,
+                name TEXT,
+                gender TEXT,
+                age_group TEXT,
+                timestamp TEXT,
+                answers_numeric TEXT,   -- JSON list
+                answers_text TEXT,      -- JSON list (در صورت جمع‌آوری توضیح متنی)
+                reaction_time TEXT,     -- JSON list
+                emotion_result TEXT,
+                risk_score REAL,
+                recommendation TEXT
+            )
+        """)
+        conn.commit()
+        conn.close()
+
+    def _ensure_csv_header(self):
+        try:
+            with open(self.csv_path, "r", encoding="utf-8") as f:
+                pass
+        except FileNotFoundError:
+            with open(self.csv_path, "w", newline='', encoding="utf-8") as f:
+                writer = csv.writer(f)
+                writer.writerow([
+                    "id", "user_id", "name", "gender", "age_group", "timestamp",
+                    "answers_numeric", "answers_text", "reaction_time",
+                    "emotion_result", "risk_score", "recommendation"
+                ])
+
+    # ---------- ورودی با تایم‌اوت ----------
+    def _get_answer_with_timeout(self, time_limit: int) -> (int, float):
+        """
+        از کاربر یک پاسخ عددی ۱..۵ می‌گیرد با محدودیت زمانی.
+        اگر کاربر پاسخی نداد، مقدار None یا عدد پیش‌فرض ثبت می‌شود.
+        بازگشتی: (answer_int, elapsed_seconds)
+        """
+        answer = {"value": None}
+        start = time.time()
+
+        def ask():
+            try:
+                val = input("پاسخ شما (۱ تا ۵): ").strip()
+                if val.isdigit() and 1 <= int(val) <= 5:
+                    answer["value"] = int(val)
+                else:
+                    # اگر ورودی نامعتبر بود، مقدار پیش‌فرض 3 در نظر گرفته می‌شود (خنثی)
+                    print("ورودی نامعتبر؛ مقدار پیش‌فرض (۳) ذخیره شد.")
+                    answer["value"] = 3
+            except Exception:
+                answer["value"] = 3
+
+        thread = threading.Thread(target=ask)
+        thread.daemon = True
+        thread.start()
+        thread.join(timeout=time_limit)
+        elapsed = time.time() - start
+
+        if answer["value"] is None:
+            # زمان تمام شده و پاسخی وارد نشده
+            print(f"⏱ زمان ({time_limit} ثانیه) برای این سؤال تمام شد. مقدار پیش‌فرض (۳) ثبت شد.")
+            return 3, elapsed
+        return answer["value"], elapsed
+
+    # ---------- تحلیل متنی با Fin-R1 ----------
+    def analyze_texts(self, texts: List[str]) -> Dict[str, Any]:
+        """
+        ورودی: لیست متن‌های آزاد کاربر (در این پیاده‌سازی اگر متن آزاد نداریم،
+                 متنِ ترکیبی از سوالات و پاسخ‌ها را تحلیل می‌کنیم)
+        خروجی: دیکشنری شامل برچسب احساس غالب و احتمالات (در صورت وجود)
+        """
+        combined = " . ".join([t for t in texts if t and t.strip()])
+        if not combined:
+            # اگر متن آزاد وجود نداشت، یک متن کوتاه پیش‌فرض می‌سازیم
+            combined = "کاربر پاسخ‌های عددی داده و متن توضیحی ندارد."
+
+        # مدل Fin-R1: خروجی لیستی از دیکشنری‌ها
+        try:
+            res = self.nlp(combined)
+        except Exception as e:
+            # در صورت خطا مدل، رزرو: برگرداندن مقدار نامشخص
+            print("خطا در فراخوانی مدل Fin-R1:", e)
+            return {"label": "unknown", "score": 0.0, "raw": None}
+
+        # res ممکن است ساختار متفاوتی داشته باشد؛ ساده‌ترین حالت:
+        if isinstance(res, list) and len(res) > 0:
+            top = res[0]
+            label = top.get("label", "unknown")
+            score = float(top.get("score", 0.0))
+            return {"label": label, "score": score, "raw": res}
+        return {"label": "unknown", "score": 0.0, "raw": res}
+
+    # ---------- محاسبه‌ی نمره ریسک ----------
+    def compute_risk_score(self, numeric_answers: List[int]) -> float:
+        """
+        ساده‌ترین نسخه: میانگین نمرات نرمال‌شده به مقیاس 0..1 سپس تبدیل به 0..100
+        (قابل توسعه با وزن‌دهی سوالات مرتبط با ریسک)
+        """
+        if not numeric_answers:
+            return 0.0
+        avg = sum(numeric_answers) / len(numeric_answers)  # بین 1..5
+        # تبدیل به 0..1
+        normalized = (avg - 1) / 4.0
+        # تبدیل به 0..100 یا 0..10 (اینجا 0..100)
+        return round(normalized * 100, 2)
+
+    # ---------- پیشنهاد سرمایه‌گذاری ساده ----------
+    def generate_recommendation(self, risk_score: float, gender: str, age_group: str) -> str:
+        """
+        یک مثال ساده براساس ریسک: می‌توان الگوریتم‌های پیشرفته‌تری جایگزین کرد.
+        """
+        if risk_score < 30:
+            rec = "سرمایه‌گذاری کم‌ریسک: صندوق‌های با درآمد ثابت و سپرده‌های کوتاه‌مدت پیشنهاد می‌شود."
+        elif risk_score < 60:
+            rec = "ترکیبی متعادل: ترکیبی از صندوق‌های درآمد ثابت و سهام با تنوع مناسب."
+        else:
+            rec = "ریسک‌پذیر: تخصیص بخشی از پرتفوی به سهام رشد و فرصت‌های نوآورانه با مدیریت ریسک."
+
+        # میشه بر اساس سن و جنسیت تنظیمات ظریف‌تری اضافه کرد
+        return rec
+
+    # ---------- ذخیره در SQLite و CSV ----------
+    def save_record(self, record: Dict[str, Any]) -> None:
+        """
+        record باید شامل:
+        id, user_id, name, gender, age_group, timestamp,
+        answers_numeric (list), answers_text (list), reaction_time (list),
+        emotion_result (dict), risk_score (float), recommendation (str)
+        """
+        # ذخیره در SQLite
+        conn = sqlite3.connect(self.db_path)
+        c = conn.cursor()
+        c.execute("""
+            INSERT INTO results (
+                id, user_id, name, gender, age_group, timestamp,
+                answers_numeric, answers_text, reaction_time,
+                emotion_result, risk_score, recommendation
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, (
+            record["id"],
+            record["user_id"],
+            record.get("name"),
+            record.get("gender"),
+            record.get("age_group"),
+            record.get("timestamp"),
+            json.dumps(record.get("answers_numeric", []), ensure_ascii=False),
+            json.dumps(record.get("answers_text", []), ensure_ascii=False),
+            json.dumps(record.get("reaction_time", []), ensure_ascii=False),
+            json.dumps(record.get("emotion_result", {}), ensure_ascii=False),
+            record.get("risk_score"),
+            record.get("recommendation")
+        ))
+        conn.commit()
+        conn.close()
+
+        # بکاپ در CSV (افزایشی)
+        with open(self.csv_path, "a", newline='', encoding="utf-8") as f:
+            writer = csv.writer(f)
+            writer.writerow([
+                record["id"],
+                record["user_id"],
+                record.get("name"),
+                record.get("gender"),
+                record.get("age_group"),
+                record.get("timestamp"),
+                json.dumps(record.get("answers_numeric", []), ensure_ascii=False),
+                json.dumps(record.get("answers_text", []), ensure_ascii=False),
+                json.dumps(record.get("reaction_time", []), ensure_ascii=False),
+                json.dumps(record.get("emotion_result", {}), ensure_ascii=False),
+                record.get("risk_score"),
+                record.get("recommendation")
+            ])
+
+    # ---------- اجرای کامل تست ----------
+    def run_test(self, name: str, gender: str, age_group: str = "نامشخص") -> Dict[str, Any]:
+        """
+        اجرای تعاملی پرسش (در کنسول).
+        خروجی: دیکشنری رکورد کامل، و علاوه بر آن ذخیره‌ی رکورد در پایگاه داده/CSV انجام می‌شود.
+        """
+        user_id = str(uuid.uuid4())
+        id_ = str(uuid.uuid4())
+        answers_numeric: List[int] = []
+        answers_text: List[str] = []     # اگر بخواهی از کاربر توضیح متنی بگیری
+        reaction_time: List[float] = []
+
+        print("\nشروع تست مالی — لطفاً سریع و صادقانه پاسخ دهید.")
+        print(f"شما {len(self.questions)} سؤال خواهید داشت. برای هر سؤال بین {self.min_time} تا {self.max_time} ثانیه فرصت دارید.")
+        print("در هر سؤال، عدد ۱ تا ۵ را وارد کنید. (۱ کم ریسک، ۵ پر ریسک) \n")
+
+        # برای هر سؤال، تایم رندم بین min_time و max_time اختصاص می‌دهیم تا استرس طبیعی‌تر شود
+        import random
+        for i, q in enumerate(self.questions, start=1):
+            time_limit = random.randint(self.min_time, self.max_time)
+            print(f"سؤال {i}: {q}")
+            print(f"زمان مجاز برای پاسخ: {time_limit} ثانیه")
+            ans, elapsed = self._get_answer_with_timeout(time_limit)
+            answers_numeric.append(ans)
+            reaction_time.append(round(elapsed, 3))
+
+            # در این پیاده‌سازی، از کاربر متن آزاد نمی‌گیریم تا فرایند سریع باشد.
+            answers_text.append("")  # می‌توان پرسش دوم برای توضیح متنی اضافه کرد
+
+            # کوتاه مکث برای UX کنسولی
+            time.sleep(0.15)
+
+        # تحلیل متنی (ترکیبی از سوالات و پاسخ‌ها) — در صورت وجود متن آزاد می‌توان آن را تغییر داد
+        # برای تحلیل بهتر، می‌توان پرسشی اضافه کرد که کاربر 1-2 جمله کوتاه درباره رفتار مالی‌اش بنویسد.
+        combined_texts = [f"Q{i+1}: {q} - A:{a}" for i, (q, a) in enumerate(zip(self.questions, answers_numeric))]
+        emotion_result = self.analyze_texts(combined_texts)
+
+        # محاسبه‌ی نمره‌ی ریسک
+        risk_score = self.compute_risk_score(answers_numeric)
+
+        # تولید پیشنهاد بر اساس ریسک
+        recommendation = self.generate_recommendation(risk_score, gender, age_group)
+
+        # آماده‌سازی رکورد
+        timestamp = datetime.utcnow().isoformat()
+        record = {
+            "id": id_,
+            "user_id": user_id,
+            "name": name,
+            "gender": gender,
+            "age_group": age_group,
+            "timestamp": timestamp,
+            "answers_numeric": answers_numeric,
+            "answers_text": answers_text,
+            "reaction_time": reaction_time,
+            "emotion_result": emotion_result,
+            "risk_score": risk_score,
+            "recommendation": recommendation
+        }
+
+        # ذخیره
+        self.save_record(record)
+
+        # برگرداندن رکورد برای نمایش در main یا دیگر ماژول‌ها
+        return record

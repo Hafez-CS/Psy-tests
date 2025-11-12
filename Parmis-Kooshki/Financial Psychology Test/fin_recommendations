@@ -1,0 +1,39 @@
+class FinancialAdvisor:
+    def __init__(self):
+        #  راهنمایی بر اساس ریسک
+        pass
+
+    def get_recommendation_by_score(self, risk_score: float, emotion_label: str, age_group: str):
+        """
+        خروجی: دیکشنری شامل گزینهٔ سرمایه‌گذاری پیشنهادی و نکات رفتاری
+        """
+        r = {}
+        if risk_score < 33:
+            r["category"] = "low_risk"
+            r["investment"] = "ترجیحاً صندوق‌های درآمد ثابت و سپرده‌های بانکی"
+            r["advice"] = "تمرکز روی پس‌انداز منظم و کم‌ریسک"
+        elif risk_score < 66:
+            r["category"] = "medium_risk"
+            r["investment"] = "ترکیبی از صندوق‌های مختلط و سهام با تنوع"
+            r["advice"] = "تنوع‌بخشی و نگهداری بخشی نقدی برای مواقع ضرر"
+        else:
+            r["category"] = "high_risk"
+            r["investment"] = "اختصاص بخشی از پورتفوی به سهام رشد و فرصت‌های نوآورانه"
+            r["advice"] = "استفاده از مدیریت ریسک دقیق و نپریدن به تصمیمات احساسی"
+
+        # افزودن نکتهٔ کوتاه بر اساس احساس فعلی (label)
+        if emotion_label and isinstance(emotion_label, str):
+            lab = emotion_label.lower()
+            if "anx" in lab or "fear" in lab or "stress" in lab:
+                r["behavior_note"] = "احساس اضطراب تشخیص داده شده؛ تصمیم‌گیری‌های بزرگ را به تعویق بیندازید."
+            elif "conf" in lab or "positive" in lab:
+                r["behavior_note"] = "احساس مثبت/اعتماد مشاهده شد؛ با این حال کنترل ریسک را فراموش نکنید."
+            else:
+                r["behavior_note"] = "وضعیت احساسی خنثی یا نامشخص است؛ قبل از تصمیم گرفتن تحلیل انجام دهید."
+        else:
+            r["behavior_note"] = "وضعیت احساسی نامشخص است."
+
+        # می‌توان بر اساس age_group شخصی‌سازی اضافه کرد
+        r["age_group_note"] = f"پیشنهاد کلی برای گروه سنی {age_group}"
+
+        return r

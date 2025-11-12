@@ -1,0 +1,68 @@
+import sqlite3
+import pandas as pd
+import json
+from typing import Dict, Any
+
+class FinancialDB:
+    def __init__(self, db_name: str = "financial_test.db"):
+        self.db_name = db_name
+        self.conn = sqlite3.connect(self.db_name, check_same_thread=False)
+        self.cursor = self.conn.cursor()
+        self.create_table()
+
+    def create_table(self):
+        self.cursor.execute("""
+        CREATE TABLE IF NOT EXISTS financial_results (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id TEXT,
+            name TEXT,
+            gender TEXT,
+            age_group TEXT,
+            timestamp TEXT,
+            answers_numeric TEXT,
+            answers_text TEXT,
+            reaction_time TEXT,
+            emotion_result TEXT,
+            risk_score REAL,
+            financial_personality TEXT,
+            recommendation TEXT
+        )
+        """)
+        self.conn.commit()
+
+    def insert_result(self, record: Dict[str, Any]):
+        # ذخیرهٔ مقادیر (لیست‌ها را به JSON تبدیل می‌کنیم)
+        self.cursor.execute("""
+            INSERT INTO financial_results (
+                user_id, name, gender, age_group, timestamp,
+                answers_numeric, answers_text, reaction_time,
+                emotion_result, risk_score, financial_personality, recommendation
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, (
+            record.get("user_id"),
+            record.get("name"),
+            record.get("gender"),
+            record.get("age_group"),
+            record.get("timestamp"),
+            json.dumps(record.get("answers_numeric", []), ensure_ascii=False),
+            json.dumps(record.get("answers_text", []), ensure_ascii=False),
+            json.dumps(record.get("reaction_time", []), ensure_ascii=False),
+            json.dumps(record.get("emotion_result", {}), ensure_ascii=False),
+            record.get("risk_score"),
+            record.get("financial_personality"),
+            json.dumps(record.get("recommendation", {}), ensure_ascii=False)
+        ))
+        self.conn.commit()
+
+    def fetch_all(self) -> pd.DataFrame:
+        df = pd.read_sql_query("SELECT * FROM financial_results", self.conn)
+        return df
+
+    def export_csv_for_powerbi(self, csv_path: str = "financial_for_powerbi.csv"):
+        df = self.fetch_all()
+        # تبدیل ستون‌های JSON به رشتهٔ مناسب (Power BI می‌تواند JSON را هم بخواند یا آن‌ها را پردازش کند)
+        df.to_csv(csv_path, index=False, encoding="utf-8-sig")
+        return csv_path
+
+    def close(self):
+        self.conn.close()
